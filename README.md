@@ -15,7 +15,7 @@
 dog-stream-gateway/
 ├── cmd/dog-stream-gateway/ # 程序入口，组装各模块，处理优雅退出
 ├── internal/
-│   ├── ingestion/          # ROS1/ROS2 数据接入层，高速读取二进制流
+│   ├── ingestion/          # ROS2 Humble 数据接入层，高速读取二进制流 (rclgo)
 │   ├── metrics/            # Prometheus 性能指标监控
 │   ├── pool/               # 内存池管理，零分配核心
 │   ├── processing/         # 3D 点云抽稀清洗与 2D 栅格压缩
@@ -32,7 +32,7 @@ dog-stream-gateway/
 
 ### 1. 环境准备
 
-确保已安装 Go 1.22+，并在本地具有 ROS1 Master 或者可以通过网络连接到远端 ROS 机器。
+确保已安装 Go 1.22+，并在本地配置好了 **ROS2 Humble** 环境（需要 source `/opt/ros/humble/setup.bash` 以支持 rclgo 的 CGO 编译）。
 
 ```bash
 # 下载依赖并拉取所有库
@@ -46,7 +46,7 @@ go mod tidy
 cp .env.example .env
 ```
 
-请根据实际环境修改 `.env` 中的 `ROS_MASTER_URI`、`ROS_NODE_HOST` 等配置。
+请根据实际环境修改 `.env` 中的 `ROS_DOMAIN_ID` 等配置。
 
 ### 3. 启动网关
 
@@ -72,14 +72,3 @@ go build -o dog-stream-gateway ./cmd/dog-stream-gateway/main.go
 - `gateway_webrtc_buffer_bytes`: 当前 WebRTC 缓冲区的积压情况。
 - `gateway_dropped_frames_total`: 主动丢弃的帧数（按丢弃原因分类）。
 - `gateway_memory_pool_borrow_total`: 内存池借出频率，用于监控池的健康状态。
-
-## ROS1 与 ROS2 切换说明
-
-当前项目使用 `github.com/bluenviron/goroslib/v2` 作为 ROS1 的纯 Go 实现。
-
-**如需切换至 ROS2：**
-1. 移除 `goroslib` 相关依赖。
-2. 引入 `github.com/tiiuae/cyclonedds-go` 或其他 CGO 桥接方案。
-3. 仅需修改 `internal/ingestion/ros.go`：
-   - 将 `NewNode` 替换为 ROS2 参与者的初始化逻辑。
-   - 订阅 `/rtabmap/cloud_map` 时，将收到的 `[]byte` 继续封装为 `types.RosRawFrame`，并送入 `ingestCh` 即可，**无需修改任何下游代码**。

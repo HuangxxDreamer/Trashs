@@ -1,10 +1,8 @@
 package pool
 
 import (
-	"sync"
-	"time"
-
 	"dog-stream-gateway/internal/metrics"
+	"sync"
 )
 
 // MemoryPool 是整个系统零 GC 压力的命脉。
@@ -14,7 +12,7 @@ import (
 
 // 3D 点云最大支持的点数，由于我们只取 3000~8000，但为防止突发，分配的容量可以稍微大一点
 // 8000 个点，每个点 7 个 float32 (X,Y,Z, R,G,B,A) = 56000 个 float32
-const maxFloat32Capacity = 60000 
+const maxFloat32Capacity = 60000
 
 // Float32Buffer 专门用于包装 3D 点云处理后的浮点数组
 type Float32Buffer struct {
@@ -65,10 +63,12 @@ func PutFloat32Buffer(buf *Float32Buffer) {
 	}
 }
 
-// GetByteBuffer 从内存池借出一个 byte 缓冲区
+// GetByteBuffer 从内存池借出一个 byte 缓冲区 ，初始容量为 100KB
+// 借出的切片长度(len)已被重置为0，但容量(cap)保持。
+// 这样在 append 操作时，能真正实现零分配。
 func GetByteBuffer() *ByteBuffer {
 	buf := bytePool.Get().(*ByteBuffer)
-	buf.Data = buf.Data[:0] // 重置长度
+	buf.Data = buf.Data[:0] // 重置长度，复用底层内存
 	metrics.MemoryPoolBorrowTotal.WithLabelValues("byte").Inc()
 	return buf
 }

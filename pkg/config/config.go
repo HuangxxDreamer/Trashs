@@ -15,9 +15,9 @@ type Config struct {
 	}
 
 	ROS struct {
-		MasterURI  string // ROS Master 的地址，例如 127.0.0.1:11311
+		DomainID   int    // ROS2 的 Domain ID
+		Namespace  string // 节点命名空间
 		NodeName   string // 本网关在 ROS 网络中的节点名称
-		NodeHost   string // 本节点绑定的 IP
 		TopicCloud string // 订阅的 3D 点云话题名称
 		TopicGrid  string // 订阅的 2D 栅格地图话题名称
 	}
@@ -52,9 +52,9 @@ func LoadConfig() {
 	viper.SetDefault("PORT", 8080)
 	viper.SetDefault("LOG_LEVEL", "info")
 
-	viper.SetDefault("ROS_MASTER_URI", "127.0.0.1:11311")
+	viper.SetDefault("ROS_DOMAIN_ID", 0)
+	viper.SetDefault("ROS_NAMESPACE", "")
 	viper.SetDefault("ROS_NODE_NAME", "dog_stream_gateway")
-	viper.SetDefault("ROS_NODE_HOST", "127.0.0.1")
 	viper.SetDefault("TOPIC_CLOUD", "/rtabmap/cloud_map")
 	viper.SetDefault("TOPIC_GRID", "/rtabmap/grid_map")
 
@@ -73,9 +73,9 @@ func LoadConfig() {
 	Cfg.Server.Port = viper.GetInt("PORT")
 	Cfg.Server.LogLevel = viper.GetString("LOG_LEVEL")
 
-	Cfg.ROS.MasterURI = viper.GetString("ROS_MASTER_URI")
+	Cfg.ROS.DomainID = viper.GetInt("ROS_DOMAIN_ID")
+	Cfg.ROS.Namespace = viper.GetString("ROS_NAMESPACE")
 	Cfg.ROS.NodeName = viper.GetString("ROS_NODE_NAME")
-	Cfg.ROS.NodeHost = viper.GetString("ROS_NODE_HOST")
 	Cfg.ROS.TopicCloud = viper.GetString("TOPIC_CLOUD")
 	Cfg.ROS.TopicGrid = viper.GetString("TOPIC_GRID")
 

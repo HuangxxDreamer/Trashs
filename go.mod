@@ -3,22 +3,24 @@ module dog-stream-gateway
 go 1.25.0
 
 require (
-	github.com/bluenviron/goroslib/v2 v2.1.5
 	github.com/disintegration/imaging v1.6.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v4 v4.2.9
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.21.0
+	github.com/tiiuae/rclgo v0.0.0-20260225085354-508dd42245da
+	github.com/tiiuae/rclgo-msgs v0.0.0-20220701121459-d4756ce1bf29
 )
 
 require (
+	github.com/TIERS/rclgo v0.0.0-20211008150307-8dd0c40802a6 // indirect
+	github.com/TIERS/rclgo-msgs v0.0.0-20211008153821-b2a44a1030fd // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gookit/color v1.5.4 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -48,7 +50,6 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.48.0 // indirect

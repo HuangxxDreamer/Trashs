@@ -9,9 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
-	"math/rand"
 	"sync"
-	"time"
 
 	"github.com/disintegration/imaging"
 	"github.com/rs/zerolog/log"
@@ -42,9 +40,6 @@ func NewProcessor(ingestCh chan *types.RosRawFrame, processCh chan *types.Proces
 // Start 启动后台消费 Goroutine，阻塞执行直至 ctx 被取消。
 func (p *Processor) Start(ctx context.Context) {
 	log.Info().Msg("[Processing] 启动数据清洗与降采样线程...")
-	
-	// 初始化随机种子，用于后续的点云随机降采样（相比体素滤波在 CPU 上更快，适合极端性能场景）
-	rand.Seed(time.Now().UnixNano())
 
 	for {
 		select {
@@ -77,7 +72,7 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 
 	pointSize := 16 // 假定一个点占用 16 字节
 	totalPoints := len(raw.RawData) / pointSize
-	
+
 	if totalPoints == 0 {
 		return
 	}
@@ -90,14 +85,14 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 
 	// 计算采样步长或概率（这里采用简化的步长采样，比纯随机快，且分布较均匀）
 	step := float64(totalPoints) / float64(targetPoints)
-	
+
 	// 从内存池借用一个 float32 缓冲数组
 	buf := pool.GetFloat32Buffer()
 	outPoints := buf.Data
 
 	// 局部坐标到 WGS84 的平移矩阵（占位符示例）
 	// 在实际工业场景中，这里会根据锚点进行复杂的四元数旋转和平移。
-	const offsetX, offsetY, offsetZ = 100.0, 200.0, 50.0 
+	const offsetX, offsetY, offsetZ = 100.0, 200.0, 50.0
 
 	for i := 0.0; i < float64(totalPoints); i += step {
 		idx := int(i) * pointSize
@@ -153,8 +148,8 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 // 它负责把一维的概率数组 (-1, 0-100) 转换为极小的 PNG 图像，然后转为 Base64 传递给 Egress。
 func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 	// 假设栅格地图是固定分辨率 400x400 的（实际需要从 ROS Msg Info 提取，此处简化）
-	width, height := 400, 400 
-	
+	width, height := 400, 400
+
 	// 防止越界
 	if len(raw.RawData) < width*height {
 		return
@@ -166,14 +161,14 @@ func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 		for x := 0; x < width; x++ {
 			val := int8(raw.RawData[y*width+x])
 			var c color.NRGBA
-			
+
 			// ROS 中 -1 代表未知，0 代表空闲，100 代表障碍物
 			if val == -1 {
 				c = color.NRGBA{R: 128, G: 128, B: 128, A: 255} // 灰色
 			} else if val == 0 {
 				c = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // 白色
 			} else {
-				c = color.NRGBA{R: 0, G: 0, B: 0, A: 255}       // 黑色
+				c = color.NRGBA{R: 0, G: 0, B: 0, A: 255} // 黑色
 			}
 			img.SetNRGBA(x, y, c)
 		}
@@ -185,25 +180,25 @@ func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 	// 3. PNG 压缩并获取字节流
 	// 我们从内存池借一个 ByteBuffer，避免频繁 gc
 	byteBuf := pool.GetByteBuffer()
-	
+
 	// 封装成 io.Writer 兼容形式
-	writer := bytes.NewBuffer(byteBuf.Data[:0]) 
+	writer := bytes.NewBuffer(byteBuf.Data[:0])
 	err := png.Encode(writer, smallImg)
 	if err != nil {
 		log.Error().Err(err).Msg("[Processing] PNG 编码失败")
 		pool.PutByteBuffer(byteBuf)
 		return
 	}
-	
+
 	// 注意，写入后切片的长度已经被改变了，我们需要拿到实际切片
 	encodedBytes := writer.Bytes()
-	
+
 	// 4. Base64 编码
 	// 为满足要求，我们将压缩好的 PNG 转换为 Base64 字符串形式（直接存入 []byte）
 	b64Len := base64.StdEncoding.EncodedLen(len(encodedBytes))
 	b64Data := make([]byte, b64Len)
 	base64.StdEncoding.Encode(b64Data, encodedBytes)
-	
+
 	// 可以将原来的 byteBuf 归还，因为我们已经做了一次 base64 分配
 	// 或者直接将 b64Data 发送，在 WebRTC 层再作为 []byte 发送。
 	pool.PutByteBuffer(byteBuf)

@@ -23,7 +23,7 @@ import (
 func main() {
 	// 1. 初始化日志配置
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC33String})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339Nano})
 
 	// 2. 加载全局配置
 	config.LoadConfig()

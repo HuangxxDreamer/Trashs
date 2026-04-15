@@ -7,7 +7,6 @@ import (
 	"math"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -103,7 +102,7 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 	// -----------------------------------------------------
 	// 核心架构要求：创建 2 个 DataChannel
 	// -----------------------------------------------------
-	
+
 	// 1. DataChannel 1 (3D PointCloud)：极速传输，允许丢包，绝不阻塞
 	var maxRetransmits uint16 = 0
 	ordered := false
@@ -214,7 +213,7 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 					if err != nil {
 						log.Error().Err(err).Msg("[WebRTC] 发送 3D 数据失败")
 					}
-					
+
 					pool.PutByteBuffer(byteBuf)
 				}
 			} else if frame.Type == types.DataTypeGridMap {
