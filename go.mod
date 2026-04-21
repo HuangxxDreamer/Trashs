@@ -10,7 +10,6 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.21.0
 	github.com/tiiuae/rclgo v0.0.0-20260225085354-508dd42245da
-	github.com/tiiuae/rclgo-msgs v0.0.0-20220701121459-d4756ce1bf29
 )
 
 require (

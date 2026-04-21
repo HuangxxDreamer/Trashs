@@ -4,9 +4,10 @@ import (
 	"context"
 	"time"
 
+	nav_msgs "dog-stream-gateway/internal/msgs/nav_msgs/msg"
+	sensor_msgs "dog-stream-gateway/internal/msgs/sensor_msgs/msg"
+
 	"github.com/rs/zerolog/log"
-	nav_msgs "github.com/tiiuae/rclgo-msgs/nav_msgs/msg"
-	sensor_msgs "github.com/tiiuae/rclgo-msgs/sensor_msgs/msg"
 	"github.com/tiiuae/rclgo/pkg/rclgo"
 
 	"dog-stream-gateway/internal/types"
