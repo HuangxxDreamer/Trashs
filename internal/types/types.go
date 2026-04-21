@@ -15,7 +15,9 @@ const (
 // 为了追求极致性能，RawData 指向的内存是由 ROS 库底层分配的，或者我们在 Pool 中复用的 []byte
 type RosRawFrame struct {
 	Type      DataType      // 数据类型：点云或栅格地图
-	RawData   []byte        // 原始二进制流，不在此处解析，只做字节拷贝
+	RawData   []byte        // 原始二进制流
+	Width     int           // 仅在 DataTypeGridMap 时有效：地图宽度
+	Height    int           // 仅在 DataTypeGridMap 时有效：地图高度
 	Timestamp time.Time     // 消息时间戳
 }
 

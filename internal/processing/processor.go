@@ -3,7 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -147,11 +147,16 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 // handleGridMap 处理 2D 栅格地图
 // 它负责把一维的概率数组 (-1, 0-100) 转换为极小的 PNG 图像，然后转为 Base64 传递给 Egress。
 func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
-	// 假设栅格地图是固定分辨率 400x400 的（实际需要从 ROS Msg Info 提取，此处简化）
-	width, height := 400, 400
+	// 从 ROS RawFrame 中获取实际的动态地图分辨率
+	width, height := raw.Width, raw.Height
 
-	// 防止越界
-	if len(raw.RawData) < width*height {
+	// 防止数据长度与声明的分辨率不匹配导致的越界
+	if width <= 0 || height <= 0 || len(raw.RawData) < width*height {
+		log.Warn().
+			Int("Width", width).
+			Int("Height", height).
+			Int("DataLen", len(raw.RawData)).
+			Msg("[Processing] 栅格地图数据不完整或分辨率异常，跳过处理。")
 		return
 	}
 
@@ -193,21 +198,20 @@ func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 	// 注意，写入后切片的长度已经被改变了，我们需要拿到实际切片
 	encodedBytes := writer.Bytes()
 
-	// 4. Base64 编码
-	// 为满足要求，我们将压缩好的 PNG 转换为 Base64 字符串形式（直接存入 []byte）
-	b64Len := base64.StdEncoding.EncodedLen(len(encodedBytes))
-	b64Data := make([]byte, b64Len)
-	base64.StdEncoding.Encode(b64Data, encodedBytes)
-
-	// 可以将原来的 byteBuf 归还，因为我们已经做了一次 base64 分配
-	// 或者直接将 b64Data 发送，在 WebRTC 层再作为 []byte 发送。
-	pool.PutByteBuffer(byteBuf)
-
+	// 将压缩好的 PNG 字节流直接放入 ProcessedFrame
+	// 这样可以避免在处理路径上进行昂贵的 Base64 编码，符合零 GC 设计原则
 	processedFrame := &types.ProcessedFrame{
 		Type:      types.DataTypeGridMap,
-		MapData:   b64Data,
+		MapData:   encodedBytes,
 		Timestamp: raw.Timestamp,
 	}
+
+	// 此时可以安全归还 byteBuf 到池中，因为 encodedBytes 已经完成了拷贝或不再需要底层引用
+	// 实际上 bytes.NewBuffer(byteBuf.Data[:0]) 使用的是池化内存，
+	// 我们需要确保在 WebRTC 发送完成前，这块内存不被复用。
+	// 为了简单起见，我们在这里不立即归还，而是在 Egress 层发送完后手动管理，
+	// 或者在此处直接分配一份新的（2D 地图频率低，影响较小）。
+	// 此处保持现状，确保数据安全。
 
 	select {
 	case p.processCh <- processedFrame:

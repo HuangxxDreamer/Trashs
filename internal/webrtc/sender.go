@@ -2,6 +2,7 @@ package webrtc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -37,12 +38,12 @@ type WebRTCSender struct {
 	pc        *webrtc.PeerConnection
 	dc3D      *webrtc.DataChannel
 	dc2D      *webrtc.DataChannel
-	mu        sync.Mutex // 保护 PeerConnection 和 DataChannel 引用
+	mu        sync.RWMutex // 升级为读写锁，保护 PeerConnection 和 DataChannel 引用
 
 	// 新增归档相关字段
-	archiver        *archive.Archiver
-	latestMapBase64 []byte
-	mapMu           sync.RWMutex
+	archiver     *archive.Archiver
+	latestMapRaw []byte
+	mapMu        sync.RWMutex
 }
 
 // NewWebRTCSender 初始化一个流媒体发送器，但暂不启动 HTTP 监听
@@ -96,21 +97,19 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close()
 
-	// 初始化一个新的 PeerConnection
-	s.mu.Lock()
-	if s.pc != nil {
-		log.Warn().Msg("[WebRTC] 发现旧的连接，正在替换")
-		s.pc.Close()
-	}
+	// 修复优雅退出：监听上下文完成信号以主动断开 WebSocket
+	// 当 http.Server 停止或连接中断时，r.Context() 会被取消
+	go func() {
+		<-r.Context().Done()
+		conn.Close()
+	}()
 
+	// 初始化一个新的 PeerConnection
 	pc, err := s.api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		log.Error().Err(err).Msg("[WebRTC] 创建 PeerConnection 失败")
-		s.mu.Unlock()
 		return
 	}
-	s.pc = pc
-	s.mu.Unlock()
 
 	// -----------------------------------------------------
 	// 核心架构要求：创建 2 个 DataChannel
@@ -127,8 +126,6 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 		log.Error().Err(err).Msg("[WebRTC] 创建 3D DataChannel 失败")
 		return
 	}
-	s.dc3D = dc3D
-	dc3D.OnOpen(func() { log.Info().Msg("[WebRTC] 3D 点云 DataChannel 1 已打开") })
 
 	// 2. DataChannel 2 (2D Map + Status)：可靠传输
 	dc2D, err := pc.CreateDataChannel("gridmap", nil) // 默认 ordered:true, reliable
@@ -136,7 +133,39 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 		log.Error().Err(err).Msg("[WebRTC] 创建 2D DataChannel 失败")
 		return
 	}
+
+	// 在持有写锁的情况下，统一更新所有关键引用，确保原子性
+	s.mu.Lock()
+	if s.pc != nil {
+		log.Warn().Msg("[WebRTC] 发现旧的连接，正在关闭旧连接")
+		s.pc.Close()
+	}
+	s.pc = pc
+	s.dc3D = dc3D
 	s.dc2D = dc2D
+	s.mu.Unlock()
+
+	// 监听连接状态，及时清理僵尸资源
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Info().Str("State", state.String()).Msg("[WebRTC] 连接状态变更")
+		if state == webrtc.PeerConnectionStateDisconnected ||
+			state == webrtc.PeerConnectionStateFailed ||
+			state == webrtc.PeerConnectionStateClosed {
+
+			log.Warn().Msg("[WebRTC] 客户端连接已断开或失败，清理资源...")
+			s.mu.Lock()
+			// 只有当当前的 pc 确实是这个要关闭的 pc 时才置空，防止误删新接入的连接
+			if s.pc == pc {
+				s.pc = nil
+				s.dc3D = nil
+				s.dc2D = nil
+			}
+			s.mu.Unlock()
+			pc.Close()
+		}
+	})
+
+	dc3D.OnOpen(func() { log.Info().Msg("[WebRTC] 3D 点云 DataChannel 1 已打开") })
 	dc2D.OnOpen(func() { log.Info().Msg("[WebRTC] 2D 栅格 DataChannel 2 已打开") })
 
 	// 交换 SDP 与 Action 指令
@@ -151,8 +180,8 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 		if msg.Action == "finish_mapping" {
 			log.Info().Msg("[WebRTC] 收到前端 'finish_mapping' 指令")
 			s.mapMu.RLock()
-			data := make([]byte, len(s.latestMapBase64))
-			copy(data, s.latestMapBase64)
+			data := make([]byte, len(s.latestMapRaw))
+			copy(data, s.latestMapRaw)
 			s.mapMu.RUnlock()
 
 			if len(data) > 0 {
@@ -201,10 +230,12 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case frame := <-s.processCh:
-			// 防御性处理：如果没有连接或 Channel 没打开，直接丢弃
-			s.mu.Lock()
+			// 获取当前连接快照
+			s.mu.RLock()
 			pc := s.pc
-			s.mu.Unlock()
+			dc3D := s.dc3D
+			dc2D := s.dc2D
+			s.mu.RUnlock()
 
 			if pc == nil || pc.ConnectionState() != webrtc.PeerConnectionStateConnected {
 				s.freeFrame(frame)
@@ -215,8 +246,8 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 				// -----------------------------------------------------
 				// 工业级抗干扰策略：基于阈值的主动丢帧机制
 				// -----------------------------------------------------
-				if s.dc3D != nil && s.dc3D.ReadyState() == webrtc.DataChannelStateOpen {
-					buffered := s.dc3D.BufferedAmount()
+				if dc3D != nil && dc3D.ReadyState() == webrtc.DataChannelStateOpen {
+					buffered := dc3D.BufferedAmount()
 					metrics.WebRTCBufferBytes.Set(float64(buffered))
 
 					if buffered > thresholdBytes {
@@ -243,7 +274,7 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 						binary.LittleEndian.PutUint32(byteBuf.Data[i*4:], math.Float32bits(f))
 					}
 
-					err := s.dc3D.Send(byteBuf.Data)
+					err := dc3D.Send(byteBuf.Data)
 					if err != nil {
 						log.Error().Err(err).Msg("[WebRTC] 发送 3D 数据失败")
 					}
@@ -251,15 +282,20 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 					pool.PutByteBuffer(byteBuf)
 				}
 			} else if frame.Type == types.DataTypeGridMap {
-				// 缓存最新地图数据用于归档
+				// 缓存最新地图原始字节流用于归档 (PNG 格式)
 				s.mapMu.Lock()
-				s.latestMapBase64 = make([]byte, len(frame.MapData))
-				copy(s.latestMapBase64, frame.MapData)
+				s.latestMapRaw = make([]byte, len(frame.MapData))
+				copy(s.latestMapRaw, frame.MapData)
 				s.mapMu.Unlock()
 
-				// 2D 栅格地图，可靠传输
-				if s.dc2D != nil && s.dc2D.ReadyState() == webrtc.DataChannelStateOpen {
-					err := s.dc2D.Send(frame.MapData)
+				// 2D 栅格地图推送给前端，前端 img 标签需要 Base64 (或带有 data:image/png;base64 前缀)
+				// 注意：如果前端 README 约定只推纯 base64，则此处不加前缀
+				if dc2D != nil && dc2D.ReadyState() == webrtc.DataChannelStateOpen {
+					b64Len := base64.StdEncoding.EncodedLen(len(frame.MapData))
+					b64Data := make([]byte, b64Len)
+					base64.StdEncoding.Encode(b64Data, frame.MapData)
+
+					err := dc2D.Send(b64Data)
 					if err != nil {
 						log.Error().Err(err).Msg("[WebRTC] 发送 2D 数据失败")
 					}

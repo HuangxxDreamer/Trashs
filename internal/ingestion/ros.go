@@ -173,6 +173,8 @@ func (im *IngestionManager) onOccupancyGrid(msg *nav_msgs.OccupancyGrid) {
 	frame := &types.RosRawFrame{
 		Type:      types.DataTypeGridMap,
 		RawData:   dataBytes,
+		Width:     int(msg.Info.Width),
+		Height:    int(msg.Info.Height),
 		Timestamp: time.Now(),
 	}
 
