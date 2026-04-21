@@ -72,3 +72,35 @@ go build -o dog-stream-gateway ./cmd/dog-stream-gateway/main.go
 - `gateway_webrtc_buffer_bytes`: 当前 WebRTC 缓冲区的积压情况。
 - `gateway_dropped_frames_total`: 主动丢弃的帧数（按丢弃原因分类）。
 - `gateway_memory_pool_borrow_total`: 内存池借出频率，用于监控池的健康状态。
+
+## “流媒体预览 + SSD 全量归档”双轨制
+
+本项目实现了“前端实时增量预览”与“后端离线全量归档”的解耦架构。
+
+### 1. 结束建图与归档流程
+
+前端在完成建图后，可以通过 WebSocket 发送指令触发后端归档：
+- **指令格式**：`{"action": "finish_mapping"}`
+- **后端动作**（全异步执行）：
+    1. **保存地图**：将最新接收到的 2D 栅格地图 Base64 保存为 `./saved_maps/map_latest.png`。
+    2. **导出 PCD**：调用配置好的 `ARCHIVE_ROS_EXPORT_CMD` 命令（如 `rosrun pcl_ros pointcloud_to_pcd`）导出完整的 3D 点云文件。
+    3. **生成 3D Tiles**：自动调用 `py3dtiles convert` 将导出的 PCD 转换为 Cesium 可直接加载的 3D Tiles 格式，存储于 `./saved_maps/3dtiles/`。
+
+### 2. 离线回放与访问
+
+- **静态服务**：后端自动将 `./saved_maps/` 目录挂载到 `http://localhost:8080/maps/`。
+- **Cesium 加载**：前端可以通过访问 `http://localhost:8080/maps/3dtiles/tileset.json` 直接加载离线生成的 3D 地图。
+
+### 3. 配置说明
+
+在 `.env` 中可以配置以下参数：
+- `ARCHIVE_SAVE_DIR=saved_maps`：文件保存目录。
+- `ARCHIVE_ROS_EXPORT_CMD="rosrun pcl_ros pointcloud_to_pcd input:=/rtabmap/cloud_map"`：ROS 导出 PCD 的具体命令。
+- `ARCHIVE_TIMEOUT=300`：外部命令（PCD 导出、3D Tiles 转换）的超时时间。
+
+## 优雅退出机制
+
+当按下 `Ctrl+C` 时，网关会进入优雅关闭流程：
+1. 发送信号给所有子 Goroutine 停止工作。
+2. **等待归档任务**：主程序会使用 `sync.WaitGroup` 阻塞，直到当前正在运行的 `py3dtiles` 转换任务安全完成，防止生成损坏的数据集。
+3. 打印“系统已安全关闭”后退出。

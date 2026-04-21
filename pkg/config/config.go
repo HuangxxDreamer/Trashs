@@ -33,6 +33,12 @@ type Config struct {
 		MaxPoints              int     // 单帧点云允许的最大点数，超出的将被截断或丢弃
 		GridCompressionQuality int     // 2D 栅格地图压缩为 PNG/WebP 时的质量系数 (1-100)
 	}
+
+	Archive struct {
+		SaveDir      string // 归档文件保存目录，默认 saved_maps
+		RosExportCmd string // ROS 导出 PCD 的命令
+		Timeout      int    // 外部命令执行超时时间（秒），默认 300s
+	}
 }
 
 // Cfg 是一个全局共享的配置指针，整个系统在启动后仅可读
@@ -66,6 +72,10 @@ func LoadConfig() {
 	viper.SetDefault("MAX_POINTS", 8000)
 	viper.SetDefault("GRID_COMPRESSION_QUALITY", 80)
 
+	viper.SetDefault("ARCHIVE_SAVE_DIR", "saved_maps")
+	viper.SetDefault("ARCHIVE_ROS_EXPORT_CMD", "rosrun pcl_ros pointcloud_to_pcd input:=/rtabmap/cloud_map")
+	viper.SetDefault("ARCHIVE_TIMEOUT", 300)
+
 	_ = viper.ReadInConfig()
 
 	Cfg = &Config{}
@@ -86,6 +96,10 @@ func LoadConfig() {
 	Cfg.Processing.VoxelSize = viper.GetFloat64("VOXEL_SIZE")
 	Cfg.Processing.MaxPoints = viper.GetInt("MAX_POINTS")
 	Cfg.Processing.GridCompressionQuality = viper.GetInt("GRID_COMPRESSION_QUALITY")
+
+	Cfg.Archive.SaveDir = viper.GetString("ARCHIVE_SAVE_DIR")
+	Cfg.Archive.RosExportCmd = viper.GetString("ARCHIVE_ROS_EXPORT_CMD")
+	Cfg.Archive.Timeout = viper.GetInt("ARCHIVE_TIMEOUT")
 
 	log.Printf("[Config] 全局配置加载成功: %+v", Cfg)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/rs/zerolog/log"
 
+	"dog-stream-gateway/internal/archive"
 	"dog-stream-gateway/internal/metrics"
 	"dog-stream-gateway/internal/pool"
 	"dog-stream-gateway/internal/types"
@@ -20,6 +21,12 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// WSMessage 定义了 WebSocket 信令消息格式，支持 SDP 交换和自定义 Action 指令
+type WSMessage struct {
+	Action string                     `json:"action,omitempty"` // 例如 "finish_mapping"
+	SDP    *webrtc.SessionDescription `json:"sdp,omitempty"`    // 兼容原有的 SDP 交换
 }
 
 // WebRTCSender 负责管理 P2P 连接、两个 DataChannel 以及数据推送。
@@ -31,10 +38,15 @@ type WebRTCSender struct {
 	dc3D      *webrtc.DataChannel
 	dc2D      *webrtc.DataChannel
 	mu        sync.Mutex // 保护 PeerConnection 和 DataChannel 引用
+
+	// 新增归档相关字段
+	archiver        *archive.Archiver
+	latestMapBase64 []byte
+	mapMu           sync.RWMutex
 }
 
 // NewWebRTCSender 初始化一个流媒体发送器，但暂不启动 HTTP 监听
-func NewWebRTCSender(processCh chan *types.ProcessedFrame) (*WebRTCSender, error) {
+func NewWebRTCSender(processCh chan *types.ProcessedFrame, archiver *archive.Archiver) (*WebRTCSender, error) {
 	// 配置 WebRTC UDP 端口范围
 	s := webrtc.SettingEngine{}
 	s.SetEphemeralUDPPortRange(config.Cfg.WebRTC.PortMin, config.Cfg.WebRTC.PortMax)
@@ -44,6 +56,7 @@ func NewWebRTCSender(processCh chan *types.ProcessedFrame) (*WebRTCSender, error
 	return &WebRTCSender{
 		processCh: processCh,
 		api:       api,
+		archiver:  archiver,
 	}, nil
 }
 
@@ -126,33 +139,54 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 	s.dc2D = dc2D
 	dc2D.OnOpen(func() { log.Info().Msg("[WebRTC] 2D 栅格 DataChannel 2 已打开") })
 
-	// 交换 SDP
+	// 交换 SDP 与 Action 指令
 	for {
-		offer := webrtc.SessionDescription{}
-		if err := conn.ReadJSON(&offer); err != nil {
-			log.Info().Err(err).Msg("[WebRTC] WebSocket 解析 SDP 失败或断开")
+		var msg WSMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Info().Err(err).Msg("[WebRTC] WebSocket 解析消息失败或断开")
 			break
 		}
 
-		if err := pc.SetRemoteDescription(offer); err != nil {
-			log.Error().Err(err).Msg("[WebRTC] 设置 Remote SDP 失败")
+		// 拦截 "finish_mapping" 指令
+		if msg.Action == "finish_mapping" {
+			log.Info().Msg("[WebRTC] 收到前端 'finish_mapping' 指令")
+			s.mapMu.RLock()
+			data := make([]byte, len(s.latestMapBase64))
+			copy(data, s.latestMapBase64)
+			s.mapMu.RUnlock()
+
+			if len(data) > 0 {
+				s.archiver.StartArchive(data)
+			} else {
+				log.Warn().Msg("[WebRTC] 当前缓存的地图数据为空，无法归档")
+			}
 			continue
 		}
 
-		answer, err := pc.CreateAnswer(nil)
-		if err != nil {
-			log.Error().Err(err).Msg("[WebRTC] 创建 Answer 失败")
-			continue
-		}
+		// 处理 SDP 交换
+		if msg.SDP != nil {
+			offer := *msg.SDP
+			if err := pc.SetRemoteDescription(offer); err != nil {
+				log.Error().Err(err).Msg("[WebRTC] 设置 Remote SDP 失败")
+				continue
+			}
 
-		if err := pc.SetLocalDescription(answer); err != nil {
-			log.Error().Err(err).Msg("[WebRTC] 设置 Local SDP 失败")
-			continue
-		}
+			answer, err := pc.CreateAnswer(nil)
+			if err != nil {
+				log.Error().Err(err).Msg("[WebRTC] 创建 Answer 失败")
+				continue
+			}
 
-		if err := conn.WriteJSON(answer); err != nil {
-			log.Error().Err(err).Msg("[WebRTC] 发送 Answer 失败")
-			break
+			if err := pc.SetLocalDescription(answer); err != nil {
+				log.Error().Err(err).Msg("[WebRTC] 设置 Local SDP 失败")
+				continue
+			}
+
+			resp := WSMessage{SDP: &answer}
+			if err := conn.WriteJSON(resp); err != nil {
+				log.Error().Err(err).Msg("[WebRTC] 发送 Answer 失败")
+				break
+			}
 		}
 	}
 }
@@ -217,6 +251,12 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 					pool.PutByteBuffer(byteBuf)
 				}
 			} else if frame.Type == types.DataTypeGridMap {
+				// 缓存最新地图数据用于归档
+				s.mapMu.Lock()
+				s.latestMapBase64 = make([]byte, len(frame.MapData))
+				copy(s.latestMapBase64, frame.MapData)
+				s.mapMu.Unlock()
+
 				// 2D 栅格地图，可靠传输
 				if s.dc2D != nil && s.dc2D.ReadyState() == webrtc.DataChannelStateOpen {
 					err := s.dc2D.Send(frame.MapData)

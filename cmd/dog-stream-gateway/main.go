@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"dog-stream-gateway/internal/archive"
 	"dog-stream-gateway/internal/ingestion"
 	"dog-stream-gateway/internal/pool"
 	"dog-stream-gateway/internal/processing"
@@ -36,13 +38,22 @@ func main() {
 	ingestCh := make(chan *types.RosRawFrame, 30)
 	processCh := make(chan *types.ProcessedFrame, 30)
 
-	// 5. 注册 Prometheus 指标暴露接口
+	// 5. 注册 Prometheus 指标暴露接口与静态文件服务
 	http.Handle("/metrics", promhttp.Handler())
 
-	// 6. 初始化三大核心模块
+	// 挂载归档地图静态文件服务 (供前端离线回放 3D Tiles)
+	saveDir := config.Cfg.Archive.SaveDir
+	http.Handle("/maps/", http.StripPrefix("/maps/", http.FileServer(http.Dir(saveDir))))
+	log.Info().Str("Dir", saveDir).Msgf("已挂载静态文件服务: /maps/ -> %s", saveDir)
+
+	// 6. 初始化核心模块
+	// 新增全局 WaitGroup 用于跟踪异步归档任务
+	var wg sync.WaitGroup
+	archiverLayer := archive.NewArchiver(&wg)
+
 	ingestionLayer := ingestion.NewIngestionManager(ingestCh)
 	processingLayer := processing.NewProcessor(ingestCh, processCh)
-	webrtcLayer, err := webrtc.NewWebRTCSender(processCh)
+	webrtcLayer, err := webrtc.NewWebRTCSender(processCh, archiverLayer)
 	if err != nil {
 		log.Fatal().Err(err).Msg("初始化 WebRTC 发送层失败")
 	}
@@ -76,7 +87,11 @@ func main() {
 	// 触发所有子模块的退出
 	cancel()
 
+	// 9. 等待所有异步任务（特别是归档任务）完成
+	log.Info().Msg("正在等待异步归档任务完成 (如 py3dtiles 转换)...")
+	wg.Wait()
+
 	// 预留少量时间让 Goroutine 善后（例如释放 UDP 端口，关闭节点等）
-	time.Sleep(1 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 	log.Info().Msg("系统已安全关闭，再见！")
 }
