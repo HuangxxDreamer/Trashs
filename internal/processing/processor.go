@@ -64,13 +64,11 @@ func (p *Processor) Start(ctx context.Context) {
 // 2. 边解析边进行随机抽稀采样，仅保留 3000~8000 个点。
 // 3. 从内存池中借用 float32 数组，避免内存碎片和 GC 开销。
 func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
-	// ROS PointCloud2 的二进制结构比较复杂，通常每点包含多个字段。
-	// 这里我们做一个高性能的假设（常见的 XYZ+RGBA 结构，每个点占 16 或 32 字节）。
-	// 实际应用中需要根据 `fields` 描述动态解析，但为了“极致性能”，
-	// 我们可以硬编码其结构（假设点云以 Float32 为主，每个点 16 字节：X, Y, Z, Padding）。
-	// 在本例中，我们演示：假设每 16 字节为一个点（X,Y,Z,Intensity），提取前 3 个 float32 作为坐标。
-
-	pointSize := 16 // 假定一个点占用 16 字节
+	// 使用 ROS 消息中的动态步长，应对激光雷达字段变更
+	pointSize := raw.PointStep
+	if pointSize == 0 {
+		return
+	}
 	totalPoints := len(raw.RawData) / pointSize
 
 	if totalPoints == 0 {

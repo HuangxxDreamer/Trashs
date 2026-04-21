@@ -21,6 +21,7 @@ type RosRawFrame struct {
 	OffsetX   int       // 仅在 DataTypePointCloud 时有效：X 字段的字节偏移
 	OffsetY   int       // 仅在 DataTypePointCloud 时有效：Y 字段的字节偏移
 	OffsetZ   int       // 仅在 DataTypePointCloud 时有效：Z 字段的字节偏移
+	PointStep int       // 仅在 DataTypePointCloud 时有效：单点总字节数
 	Timestamp time.Time // 消息时间戳
 }
 

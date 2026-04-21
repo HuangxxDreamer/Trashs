@@ -166,6 +166,7 @@ func (im *IngestionManager) onPointCloud2(msg *sensor_msgs.PointCloud2) {
 		OffsetX:   offsetX,
 		OffsetY:   offsetY,
 		OffsetZ:   offsetZ,
+		PointStep: int(msg.PointStep),
 		Timestamp: time.Now(),
 	}
 

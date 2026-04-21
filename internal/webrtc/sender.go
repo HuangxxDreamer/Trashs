@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
@@ -97,6 +98,15 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close()
 
+	// 修复 WebSocket 假死连接导致的协程泄漏
+	// 设置 ReadDeadline 并配置 PongHandler，确保在断网或静默离开时能释放资源
+	const pongWait = 60 * time.Second
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	// 修复优雅退出：监听上下文完成信号以主动断开 WebSocket
 	// 当 http.Server 停止或连接中断时，r.Context() 会被取消
 	go func() {
@@ -170,6 +180,9 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 
 	// 交换 SDP 与 Action 指令
 	for {
+		// 每次读取前更新 ReadDeadline，防止假死连接泄漏
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+
 		var msg WSMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Info().Err(err).Msg("[WebRTC] WebSocket 解析消息失败或断开")
