@@ -146,10 +146,26 @@ func (im *IngestionManager) Stop() {
 
 // onPointCloud2 是传感器回调，接收到原始二进制数据。
 func (im *IngestionManager) onPointCloud2(msg *sensor_msgs.PointCloud2) {
+	// 动态解析 fields 偏移量，以应对激光雷达数据结构变化
+	var offsetX, offsetY, offsetZ int
+	for _, field := range msg.Fields {
+		switch field.Name {
+		case "x":
+			offsetX = int(field.Offset)
+		case "y":
+			offsetY = int(field.Offset)
+		case "z":
+			offsetZ = int(field.Offset)
+		}
+	}
+
 	// rclgo 生成的 PointCloud2.Data 是 []uint8 (即 []byte)
 	frame := &types.RosRawFrame{
 		Type:      types.DataTypePointCloud,
 		RawData:   msg.Data,
+		OffsetX:   offsetX,
+		OffsetY:   offsetY,
+		OffsetZ:   offsetZ,
 		Timestamp: time.Now(),
 	}
 

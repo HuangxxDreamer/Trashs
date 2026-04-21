@@ -14,18 +14,21 @@ const (
 // 该结构体用于从 ingestCh 传递到 processing 层
 // 为了追求极致性能，RawData 指向的内存是由 ROS 库底层分配的，或者我们在 Pool 中复用的 []byte
 type RosRawFrame struct {
-	Type      DataType      // 数据类型：点云或栅格地图
-	RawData   []byte        // 原始二进制流
-	Width     int           // 仅在 DataTypeGridMap 时有效：地图宽度
-	Height    int           // 仅在 DataTypeGridMap 时有效：地图高度
-	Timestamp time.Time     // 消息时间戳
+	Type      DataType  // 数据类型：点云或栅格地图
+	RawData   []byte    // 原始二进制流
+	Width     int       // 仅在 DataTypeGridMap 时有效：地图宽度
+	Height    int       // 仅在 DataTypeGridMap 时有效：地图高度
+	OffsetX   int       // 仅在 DataTypePointCloud 时有效：X 字段的字节偏移
+	OffsetY   int       // 仅在 DataTypePointCloud 时有效：Y 字段的字节偏移
+	OffsetZ   int       // 仅在 DataTypePointCloud 时有效：Z 字段的字节偏移
+	Timestamp time.Time // 消息时间戳
 }
 
 // ProcessedFrame 代表经过清洗、滤波、坐标转换和压缩后的准备发送给前端的数据
 // 该结构体用于从 processCh 传递到 webrtc 层
 type ProcessedFrame struct {
-	Type      DataType      // 数据类型
-	Points    []float32     // 降采样后的 3D 点云（XYZ + RGBA 交错排列），仅在 Type == DataTypePointCloud 时有效
-	MapData   []byte        // 压缩后的 PNG/WebP 2D 地图字节流，仅在 Type == DataTypeGridMap 时有效
-	Timestamp time.Time     // 数据时间戳，用于前端同步
+	Type      DataType  // 数据类型
+	Points    []float32 // 降采样后的 3D 点云（XYZ + RGBA 交错排列），仅在 Type == DataTypePointCloud 时有效
+	MapData   []byte    // 压缩后的 PNG/WebP 2D 地图字节流，仅在 Type == DataTypeGridMap 时有效
+	Timestamp time.Time // 数据时间戳，用于前端同步
 }

@@ -96,14 +96,17 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 
 	for i := 0.0; i < float64(totalPoints); i += step {
 		idx := int(i) * pointSize
-		if idx+12 > len(raw.RawData) {
+		// 校验：确保加上动态偏移量后不会越界
+		if idx+raw.OffsetX+4 > len(raw.RawData) ||
+			idx+raw.OffsetY+4 > len(raw.RawData) ||
+			idx+raw.OffsetZ+4 > len(raw.RawData) {
 			break
 		}
 
-		// 解析原始二进制 (小端序)
-		xBits := binary.LittleEndian.Uint32(raw.RawData[idx : idx+4])
-		yBits := binary.LittleEndian.Uint32(raw.RawData[idx+4 : idx+8])
-		zBits := binary.LittleEndian.Uint32(raw.RawData[idx+8 : idx+12])
+		// 解析原始二进制 (小端序)，使用动态偏移量
+		xBits := binary.LittleEndian.Uint32(raw.RawData[idx+raw.OffsetX : idx+raw.OffsetX+4])
+		yBits := binary.LittleEndian.Uint32(raw.RawData[idx+raw.OffsetY : idx+raw.OffsetY+4])
+		zBits := binary.LittleEndian.Uint32(raw.RawData[idx+raw.OffsetZ : idx+raw.OffsetZ+4])
 
 		x := math.Float32frombits(xBits)
 		y := math.Float32frombits(yBits)
@@ -179,8 +182,9 @@ func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 		}
 	}
 
-	// 2. 图像缩小（降采样以减少传输体积），缩放到例如 200x200
-	smallImg := imaging.Resize(img, 200, 200, imaging.NearestNeighbor)
+	// 2. 图像缩小（降采样以减少传输体积），缩放到最大 200x200 边界内
+	// 使用 imaging.Fit 代替 Resize，以保持地图的原始宽高比，防止形变。
+	smallImg := imaging.Fit(img, 200, 200, imaging.NearestNeighbor)
 
 	// 3. PNG 压缩并获取字节流
 	// 我们从内存池借一个 ByteBuffer，避免频繁 gc
@@ -198,20 +202,20 @@ func (p *Processor) handleGridMap(raw *types.RosRawFrame) {
 	// 注意，写入后切片的长度已经被改变了，我们需要拿到实际切片
 	encodedBytes := writer.Bytes()
 
-	// 将压缩好的 PNG 字节流直接放入 ProcessedFrame
-	// 这样可以避免在处理路径上进行昂贵的 Base64 编码，符合零 GC 设计原则
+	// 为了修复内存泄漏：对池化内存中的数据进行深拷贝
+	// 2D 地图频率低（约 1Hz），此处适度分配内存不会对 GC 造成明显压力
+	mapDataCopy := make([]byte, len(encodedBytes))
+	copy(mapDataCopy, encodedBytes)
+
+	// 此时可以安全归还 byteBuf 到池中，因为我们已经完成了数据拷贝
+	pool.PutByteBuffer(byteBuf)
+
+	// 将拷贝后的独立数据放入 ProcessedFrame
 	processedFrame := &types.ProcessedFrame{
 		Type:      types.DataTypeGridMap,
-		MapData:   encodedBytes,
+		MapData:   mapDataCopy,
 		Timestamp: raw.Timestamp,
 	}
-
-	// 此时可以安全归还 byteBuf 到池中，因为 encodedBytes 已经完成了拷贝或不再需要底层引用
-	// 实际上 bytes.NewBuffer(byteBuf.Data[:0]) 使用的是池化内存，
-	// 我们需要确保在 WebRTC 发送完成前，这块内存不被复用。
-	// 为了简单起见，我们在这里不立即归还，而是在 Egress 层发送完后手动管理，
-	// 或者在此处直接分配一份新的（2D 地图频率低，影响较小）。
-	// 此处保持现状，确保数据安全。
 
 	select {
 	case p.processCh <- processedFrame:

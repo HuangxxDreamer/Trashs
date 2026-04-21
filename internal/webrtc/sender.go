@@ -288,16 +288,14 @@ func (s *WebRTCSender) webrtcSenderGoroutine(ctx context.Context) {
 				copy(s.latestMapRaw, frame.MapData)
 				s.mapMu.Unlock()
 
-				// 2D 栅格地图推送给前端，前端 img 标签需要 Base64 (或带有 data:image/png;base64 前缀)
-				// 注意：如果前端 README 约定只推纯 base64，则此处不加前缀
+				// 2D 栅格地图推送给前端，前端 img 标签需要字符串类型的 Base64
+				// 使用 SendText 确保数据以文本形式发出，前端接收到的将是 string 而非 ArrayBuffer
 				if dc2D != nil && dc2D.ReadyState() == webrtc.DataChannelStateOpen {
-					b64Len := base64.StdEncoding.EncodedLen(len(frame.MapData))
-					b64Data := make([]byte, b64Len)
-					base64.StdEncoding.Encode(b64Data, frame.MapData)
+					b64Str := base64.StdEncoding.EncodeToString(frame.MapData)
 
-					err := dc2D.Send(b64Data)
+					err := dc2D.SendText(b64Str)
 					if err != nil {
-						log.Error().Err(err).Msg("[WebRTC] 发送 2D 数据失败")
+						log.Error().Err(err).Msg("[WebRTC] 发送 2D 文本数据失败")
 					}
 				}
 			}
