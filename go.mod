@@ -10,11 +10,10 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.21.0
 	github.com/tiiuae/rclgo v0.0.0-20260225085354-508dd42245da
+	github.com/tiiuae/rclgo-msgs v0.0.0-20220701121459-d4756ce1bf29
 )
 
 require (
-	github.com/TIERS/rclgo v0.0.0-20211008150307-8dd0c40802a6 // indirect
-	github.com/TIERS/rclgo-msgs v0.0.0-20211008153821-b2a44a1030fd // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

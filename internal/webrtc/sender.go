@@ -27,8 +27,9 @@ var upgrader = websocket.Upgrader{
 
 // WSMessage 定义了 WebSocket 信令消息格式，支持 SDP 交换和自定义 Action 指令
 type WSMessage struct {
-	Action string                     `json:"action,omitempty"` // 例如 "finish_mapping"
-	SDP    *webrtc.SessionDescription `json:"sdp,omitempty"`    // 兼容原有的 SDP 交换
+	Action    string                     `json:"action,omitempty"` // 例如 "finish_mapping"
+	SDP       *webrtc.SessionDescription `json:"sdp,omitempty"`    // 兼容原有的 SDP 交换
+	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty"`
 }
 
 // WebRTCSender 负责管理 P2P 连接、两个 DataChannel 以及数据推送。
@@ -52,7 +53,9 @@ func NewWebRTCSender(processCh chan *types.ProcessedFrame, archiver *archive.Arc
 	// 配置 WebRTC UDP 端口范围
 	s := webrtc.SettingEngine{}
 	s.SetEphemeralUDPPortRange(config.Cfg.WebRTC.PortMin, config.Cfg.WebRTC.PortMax)
-
+	if err := s.SetEphemeralUDPPortRange(40000, 50000); err != nil {
+		log.Warn().Err(err).Msg("[WebRTC] 设置 UDP 端口范围失败")
+	}
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
 
 	return &WebRTCSender{
@@ -120,7 +123,24 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 		log.Error().Err(err).Msg("[WebRTC] 创建 PeerConnection 失败")
 		return
 	}
+	// 🟢【新增】：为 WebSocket 增加并发写锁（因为 Read 协程和 ICE 回调都会写数据）
+	var wsWriteMu sync.Mutex
+	writeJSON := func(v interface{}) error {
+		wsWriteMu.Lock()
+		defer wsWriteMu.Unlock()
+		return conn.WriteJSON(v)
+	}
 
+	// 🟢【新增】：异步监听 Go 后端的 ICE 候选，一旦发现立刻发给前端！(Trickle ICE)
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			return
+		}
+		init := c.ToJSON()
+		if err := writeJSON(WSMessage{Candidate: &init}); err != nil {
+			log.Error().Err(err).Msg("[WebRTC] 发送 ICE 候选失败")
+		}
+	})
 	// -----------------------------------------------------
 	// 核心架构要求：创建 2 个 DataChannel
 	// -----------------------------------------------------
@@ -204,7 +224,12 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-
+		if msg.Candidate != nil {
+			if err := pc.AddICECandidate(*msg.Candidate); err != nil {
+				log.Warn().Err(err).Msg("[WebRTC] 忽略无效的 ICE 候选")
+			}
+			continue // 处理完后跳过当前循环
+		}
 		// 处理 SDP 交换
 		if msg.SDP != nil {
 			offer := *msg.SDP
@@ -225,7 +250,7 @@ func (s *WebRTCSender) signalingHandler(w http.ResponseWriter, r *http.Request) 
 			}
 
 			resp := WSMessage{SDP: &answer}
-			if err := conn.WriteJSON(resp); err != nil {
+			if err := writeJSON(resp); err != nil {
 				log.Error().Err(err).Msg("[WebRTC] 发送 Answer 失败")
 				break
 			}

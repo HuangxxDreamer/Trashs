@@ -26,6 +26,7 @@ export function usePointCloud() {
   const initPointCloudEngine = (cesiumScene: Cesium.Scene, matrix: Cesium.Matrix4) => {
     scene.value = cesiumScene;
     localToWorldMatrix.value = matrix;
+    console.log('[PointCloud] 引擎已初始化，modelMatrix 已存储:', matrix);
     startFpsCounter();
   };
 
@@ -34,11 +35,16 @@ export function usePointCloud() {
    * 数据结构: [x, y, z, r, g, b, a, ...] (Float32Array)
    */
   const processPointCloudFrame = (buffer: ArrayBuffer) => {
-    if (!scene.value || !localToWorldMatrix.value) return;
+    if (!scene.value || !localToWorldMatrix.value) {
+      console.warn('[PointCloud] 场景或 matrix 未就绪，丢弃帧');
+      return;
+    }
 
     try {
       const data = new Float32Array(buffer);
       const pointsCount = data.length / 7;
+
+      console.log(`[PointCloud] 渲染 ${pointsCount} 个点，matrix 已应用`);
 
       // 创建一个新的点云集合（Chunk）
       const points = new Cesium.PointPrimitiveCollection({
@@ -51,16 +57,18 @@ export function usePointCloud() {
         points.add({
           position: new Cesium.Cartesian3(data[offset], data[offset + 1], data[offset + 2]),
           color: new Cesium.Color(
-            data[offset + 3] / 255, 
-            data[offset + 4] / 255, 
-            data[offset + 5] / 255, 
+            data[offset + 3] / 255,
+            data[offset + 4] / 255,
+            data[offset + 5] / 255,
             data[offset + 6] / 255
           ),
-          pixelSize: 3
+          pixelSize: 8,
+          scaleByDistance: new Cesium.NearFarScalar(1.0, 8.0, 200.0, 2.0)
         });
       }
 
       scene.value.primitives.add(points);
+      scene.value.requestRender();
       chunkQueue.push(points);
       currentChunkCount.value = chunkQueue.length;
 
@@ -69,7 +77,6 @@ export function usePointCloud() {
         const oldestChunk = chunkQueue.shift();
         if (oldestChunk && !oldestChunk.isDestroyed()) {
           scene.value.primitives.remove(oldestChunk);
-          oldestChunk.destroy();
         }
         droppedFrames.value++;
       }

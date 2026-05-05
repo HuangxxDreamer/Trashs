@@ -6,6 +6,11 @@ import * as Cesium from 'cesium';
  */
 export function createCesiumViewer(containerId: string): Cesium.Viewer {
   const viewer = new Cesium.Viewer(containerId, {
+    baseLayer: false, 
+    // 2. 关闭其他不需要的全球环境特效（贴合地下 SLAM 场景）
+    skyAtmosphere: false,   // 关闭大气层
+    skyBox: false,          // 关闭天空盒（星空）
+    globe: false,
     animation: false, // 禁用动画控件
     baseLayerPicker: false, // 禁用底图选择器
     fullscreenButton: false, // 禁用全屏按钮
@@ -29,11 +34,7 @@ export function createCesiumViewer(containerId: string): Cesium.Viewer {
   });
 
   // 禁用地球和大气效果，打造纯粹的机器人坐标系空间
-  viewer.scene.globe.show = false;
-  viewer.scene.skyBox.show = false;
-  viewer.scene.sun.show = false;
-  viewer.scene.moon.show = false;
-  viewer.scene.skyAtmosphere.show = false;
+
   viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#020617'); // Tailwind slate-950
 
   // 开启抗锯齿

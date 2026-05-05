@@ -6,7 +6,8 @@ interface WebRTCOptions {
 }
 
 export function useWebRTC(options: WebRTCOptions) {
-  const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
+  const host = window.location.hostname;
+  const wsUrl = import.meta.env.VITE_WS_URL || `ws://${host}:8080/ws`;
   
   const connectionState = ref<RTCPeerConnectionState>('new');
   const isConnected = computed(() => connectionState.value === 'connected');
@@ -17,6 +18,7 @@ export function useWebRTC(options: WebRTCOptions) {
   let ws: WebSocket | null = null;
   let pcDataChannelPointCloud: RTCDataChannel | null = null;
   let pcDataChannelGridMap: RTCDataChannel | null = null;
+  let isManualDisconnect = false; // finishMapping 主动断开时跳过重连
 
   /**
    * 初始化 WebRTC 连接
@@ -28,15 +30,20 @@ export function useWebRTC(options: WebRTCOptions) {
     ws.onopen = async () => {
       console.log('[WebRTC] 信令 WebSocket 已连接，正在创建 Offer...');
       await createOffer();
+      setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: "ping" }));
+        }
+      }, 20000);
     };
 
     ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
-      
-      if (msg.type === 'answer') {
+      console.log('[WebRTC] 收到信令报文:', msg)
+      if (msg.sdp && msg.sdp.type === 'answer') {
         console.log('[WebRTC] 收到 Answer');
-        await pc?.setRemoteDescription(new RTCSessionDescription(msg));
-      } else if (msg.type === 'candidate') {
+        await pc?.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      } else if (msg.candidate) {
         console.log('[WebRTC] 收到 ICE Candidate');
         await pc?.addIceCandidate(new RTCIceCandidate(msg.candidate));
       }
@@ -44,7 +51,11 @@ export function useWebRTC(options: WebRTCOptions) {
 
     ws.onclose = () => {
       console.warn('[WebRTC] 信令 WebSocket 已关闭');
-      handleReconnect();
+      if (isManualDisconnect) {
+        console.log('[WebRTC] 手动断开，跳过重连');
+      } else {
+        handleReconnect();
+      }
     };
 
     ws.onerror = (err) => {
@@ -103,8 +114,10 @@ export function useWebRTC(options: WebRTCOptions) {
 
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
-        type: 'offer',
-        sdp: offer.sdp
+        sdp: {
+          type: 'offer', 
+          sdp: offer.sdp
+        }
       }));
     }
   };
@@ -142,8 +155,28 @@ export function useWebRTC(options: WebRTCOptions) {
 
   const reconnect = () => {
     reconnectCount.value = 0;
+    isManualDisconnect = false;
     close();
     initConnection();
+  };
+
+  /**
+   * 发送 "结束建图" 指令给后端，触发异步归档流程，随后断开 WebRTC 连接
+   */
+  const finishMapping = () => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: "finish_mapping" }));
+      console.log('[WebRTC] 已发送 finish_mapping 指令，500ms 后断开连接');
+      isManualDisconnect = true;
+      setTimeout(() => {
+        close();
+        console.log('[WebRTC] 连接已断开，重连机制已屏蔽');
+      }, 500);
+      return true;
+    } else {
+      console.warn('[WebRTC] WebSocket 未连接，无法发送 finish_mapping 指令');
+      return false;
+    }
   };
 
   const close = () => {
@@ -161,6 +194,7 @@ export function useWebRTC(options: WebRTCOptions) {
     connectionState,
     isConnected,
     reconnect,
-    initConnection
+    initConnection,
+    finishMapping
   };
 }

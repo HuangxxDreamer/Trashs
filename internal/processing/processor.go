@@ -123,7 +123,7 @@ func (p *Processor) handlePointCloud(raw *types.RosRawFrame) {
 
 		// 加入到池化缓冲中，这里不再分配新内存，只要没超过预分配容量
 		// 我们预先保留了 XYZ 以及伪造的 RGBA（全白），所以每点占 7 个 float32
-		outPoints = append(outPoints, x, y, z, 1.0, 1.0, 1.0, 1.0)
+		outPoints = append(outPoints, x, y, z, 255.0, 0.0, 0.0, 255.0)
 	}
 
 	buf.Data = outPoints

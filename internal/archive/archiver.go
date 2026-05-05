@@ -53,8 +53,9 @@ func (a *Archiver) StartArchive(latestMapRaw []byte) {
 		saveDir := config.Cfg.Archive.SaveDir
 		timestamp := time.Now().Format("20060102_150405")
 
-		// 1. 保存 2D 地图为 PNG
-		mapPath := filepath.Join(saveDir, "map_latest.png")
+		// 1. 保存 2D 地图为 PNG（带时间戳）
+		mapFile := fmt.Sprintf("map_%s.png", timestamp)
+		mapPath := filepath.Join(saveDir, mapFile)
 		if err := os.WriteFile(mapPath, latestMapRaw, 0644); err != nil {
 			log.Error().Err(err).Str("Path", mapPath).Msg("[Archiver] 保存 2D 地图失败")
 		} else {
@@ -62,50 +63,53 @@ func (a *Archiver) StartArchive(latestMapRaw []byte) {
 		}
 
 		// 2. 执行 ROS 命令导出 PCD
-		pcdFile := "cloud_" + timestamp + ".pcd"
-		pcdPath := filepath.Join(saveDir, pcdFile)
+		pcdPrefix := "cloud_" + timestamp
+		pcdPath := filepath.Join(saveDir, pcdPrefix+".pcd")
 
-		// 构造 ROS 命令 (示例：rosrun pcl_ros pointcloud_to_pcd input:=/topic)
-		// 注意：这里的命令可能需要根据实际环境调整，比如 cd 到 saveDir 执行
 		exportCmdStr := config.Cfg.Archive.RosExportCmd
 		if exportCmdStr != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Cfg.Archive.Timeout)*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			log.Info().Str("Cmd", exportCmdStr).Msg("[Archiver] 正在导出 PCD 文件...")
+			// 将完整输出路径作为参数追加到命令末尾
+			fullCmd := fmt.Sprintf("source /opt/ros/humble/setup.bash && %s %s", exportCmdStr, pcdPath)
+			log.Info().Str("Cmd", fullCmd).Msg("[Archiver] 正在导出 PCD 文件...")
 
-			// 修复环境变量缺失问题：通过 bash -c 执行，并预先 source ROS 环境
-			// 这里的 /opt/ros/humble/setup.bash 建议根据实际环境调整
-			fullCmd := fmt.Sprintf("source /opt/ros/humble/setup.bash && %s", exportCmdStr)
 			cmd := exec.CommandContext(ctx, "bash", "-c", fullCmd)
-			cmd.Dir = saveDir // 在保存目录执行，方便生成文件
 
 			if output, err := cmd.CombinedOutput(); err != nil {
 				log.Error().Err(err).Str("Output", string(output)).Msg("[Archiver] ROS 导出 PCD 失败")
 			} else {
-				log.Info().Msg("[Archiver] ROS 导出 PCD 成功")
+				log.Info().Str("Output", string(output)).Msg("[Archiver] ROS 导出 PCD 完成")
+			}
+
+			// 验证 PCD 文件是否确实生成
+			if _, err := os.Stat(pcdPath); os.IsNotExist(err) {
+				log.Warn().Str("Path", pcdPath).Msg("[Archiver] PCD 文件未生成（话题无数据或超时），跳过 3D Tiles 转换")
+				pcdPath = ""
 			}
 		}
 
-		// 3. 执行 py3dtiles convert
-		// 假设目录下已经有了导出的 PCD 或者其他格式
-		// py3dtiles convert <input> --output <output_dir>
-		tilesDir := filepath.Join(saveDir, "3dtiles")
-		if _, err := os.Stat(tilesDir); os.IsNotExist(err) {
-			os.MkdirAll(tilesDir, 0755)
-		}
+		// 3. 3D Tiles 转换（仅当 PCD 文件已被成功导出）
+		if pcdPath != "" {
+			tilesDir := filepath.Join(saveDir, fmt.Sprintf("3dtiles_%s", timestamp))
+			if _, err := os.Stat(tilesDir); os.IsNotExist(err) {
+				os.MkdirAll(tilesDir, 0755)
+			}
 
-		log.Info().Msg("[Archiver] 正在启动 py3dtiles 转换 (3D Tiles)...")
-		ctx3d, cancel3d := context.WithTimeout(context.Background(), time.Duration(config.Cfg.Archive.Timeout)*time.Second)
-		defer cancel3d()
+			log.Info().Str("Input", pcdPath).Str("OutputDir", tilesDir).Msg("[Archiver] 正在启动 3D Tiles 转换...")
+			ctx3d, cancel3d := context.WithTimeout(context.Background(), time.Duration(config.Cfg.Archive.Timeout)*time.Second)
+			defer cancel3d()
 
-		// 这里假设我们将刚才生成的 pcd 转换为 3dtiles
-		// 实际命令根据 py3dtiles 安装情况调整
-		convertCmd := exec.CommandContext(ctx3d, "py3dtiles", "convert", pcdPath, "--output", tilesDir, "--overwrite")
-		if output, err := convertCmd.CombinedOutput(); err != nil {
-			log.Error().Err(err).Str("Output", string(output)).Msg("[Archiver] py3dtiles 转换失败")
+			fullCmd := fmt.Sprintf("python3 scripts/pcd_to_3dtiles.py %s %s", pcdPath, tilesDir)
+			convertCmd := exec.CommandContext(ctx3d, "bash", "-c", fullCmd)
+			if output, err := convertCmd.CombinedOutput(); err != nil {
+				log.Error().Err(err).Str("Output", string(output)).Msg("[Archiver] 3D Tiles 转换失败")
+			} else {
+				log.Info().Str("Output", string(output)).Str("OutputDir", tilesDir).Msg("[Archiver] 3D Tiles 转换完成")
+			}
 		} else {
-			log.Info().Str("OutputDir", tilesDir).Msg("[Archiver] 3D Tiles 转换完成")
+			log.Warn().Msg("[Archiver] PCD 文件缺失，跳过 3D Tiles 转换")
 		}
 
 		log.Info().Msg("[Archiver] 所有归档任务执行完毕")

@@ -14,10 +14,12 @@ onMounted(() => {
   if (containerRef.value) {
     viewer = createCesiumViewer(containerRef.value);
     const matrix = getDefaultLocalToWorldMatrix();
-    
-    // 设置初始相机位置
+
+    // 点云实际位置约在局部坐标 (100~140, 164~235, 54~76)，相机置于点云中心上方俯瞰
+    const cameraLocal = new Cesium.Cartesian3(120.0, 200.0, 200.0);
+    const cameraWorld = Cesium.Matrix4.multiplyByPoint(matrix, cameraLocal, new Cesium.Cartesian3());
     viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(120.0, 30.0, 50.0), // 俯视
+      destination: cameraWorld,
       orientation: {
         heading: Cesium.Math.toRadians(0),
         pitch: Cesium.Math.toRadians(-90),

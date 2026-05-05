@@ -17,12 +17,24 @@
 # Go workspace file
 go.work
 
+# Compiled Go binary
+dog-stream-gateway
+
+# CGO compilation artifacts
+*.o
+*.a
+cgo-flags.env
+
 # Environment variables
 .env
+
+# Runtime output
+saved_maps/
 
 # OS specific files
 .DS_Store
 Thumbs.db
+
 # frontend
 slam-dashboard-frontend/node_modules
 slam-dashboard-frontend/dist

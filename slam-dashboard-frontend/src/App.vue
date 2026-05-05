@@ -20,15 +20,38 @@ const {
 } = usePointCloud();
 
 // WebRTC 通信逻辑
-const { 
-  connectionState, 
-  initConnection 
+const {
+  connectionState,
+  initConnection,
+  finishMapping
 } = useWebRTC({
   onPointCloudData: (buffer) => {
+    const data = new Float32Array(buffer);
+    const pointCount = data.length / 7;
+    const sizeKB = (buffer.byteLength / 1024).toFixed(2);
+    console.log(
+      `[PointCloud] 收到点云帧 | 字节数: ${buffer.byteLength} (${sizeKB} KB) | 点数: ${pointCount}`
+    );
+
+    // 打印前 3 个点用于快速验证数据流正确性
+    const sampleCount = Math.min(3, pointCount);
+    for (let i = 0; i < sampleCount; i++) {
+      const off = i * 7;
+      console.log(
+        `[PointCloud] 点[${i}]: pos=(${data[off].toFixed(3)}, ${data[off + 1].toFixed(3)}, ${data[off + 2].toFixed(3)}) ` +
+        `color=(${data[off + 3]}, ${data[off + 4]}, ${data[off + 5]}, ${data[off + 6]})`
+      );
+    }
+
     processPointCloudFrame(buffer);
   },
   onGridMapData: (data) => {
-    gridMapData.value = data; // 后端推送的是 Base64 字符串
+    // 判断一下如果后端没有加前缀，前端手动加上
+    if (!data.startsWith('data:image')) {
+      gridMapData.value = `data:image/png;base64,${data}`;
+    } else {
+      gridMapData.value = data;
+    }
   }
 });
 
@@ -37,8 +60,10 @@ const {
  */
 const handleCesiumReady = (payload: { scene: Cesium.Scene; matrix: Cesium.Matrix4 }) => {
   console.log('[App] Cesium 引擎就绪，正在初始化点云渲染器...');
+  console.log('[App] 接收到的 matrix:', payload.matrix);
+  console.log('[App] 接收到的 scene:', payload.scene);
   initPointCloudEngine(payload.scene, payload.matrix);
-  
+
   // 引擎就绪后开始建立 WebRTC 连接
   initConnection();
 };
@@ -50,11 +75,12 @@ const handleCesiumReady = (payload: { scene: Cesium.Scene; matrix: Cesium.Matrix
     <CesiumViewer @ready="handleCesiumReady" />
 
     <!-- 顶部状态栏 -->
-    <StatusPanel 
+    <StatusPanel
       :connection-state="connectionState"
       :fps="fps"
       :chunk-count="currentChunkCount"
       :dropped-frames="droppedFrames"
+      @finish-mapping="finishMapping"
     />
 
     <!-- 左下角 2D 栅格地图 -->

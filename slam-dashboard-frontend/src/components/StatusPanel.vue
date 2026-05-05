@@ -1,10 +1,18 @@
 <script setup lang="ts">
+import { ref } from 'vue';
+
 defineProps<{
   connectionState: string;
   fps: number;
   chunkCount: number;
   droppedFrames: number;
 }>();
+
+const emit = defineEmits<{
+  (e: 'finishMapping'): void;
+}>();
+
+const isArchiving = ref(false);
 
 const getStatusColor = (state: string) => {
   switch (state) {
@@ -13,6 +21,12 @@ const getStatusColor = (state: string) => {
     case 'failed': return 'text-rose-500';
     default: return 'text-slate-400';
   }
+};
+
+const handleFinishMapping = () => {
+  isArchiving.value = true;
+  emit('finishMapping');
+  setTimeout(() => { isArchiving.value = false; }, 3000);
 };
 </script>
 
@@ -51,15 +65,31 @@ const getStatusColor = (state: string) => {
           <span class="text-rose-400 font-bold">{{ droppedFrames }}</span>
         </div>
         <div class="w-full bg-slate-800 h-1 mt-1 rounded-full overflow-hidden">
-          <div 
-            class="bg-rose-500 h-full transition-all duration-500" 
+          <div
+            class="bg-rose-500 h-full transition-all duration-500"
             :style="{ width: `${Math.min((droppedFrames / 1000) * 100, 100)}%` }"
           ></div>
         </div>
       </div>
+
+      <!-- 结束建图按钮 -->
+      <div class="pt-2 border-t border-slate-800/50">
+        <button
+          :disabled="isArchiving || connectionState !== 'connected'"
+          @click="handleFinishMapping"
+          class="w-full py-2 rounded text-xs font-bold uppercase tracking-wider transition-all duration-300"
+          :class="isArchiving
+            ? 'bg-amber-900/40 text-amber-400 cursor-wait'
+            : connectionState !== 'connected'
+              ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+              : 'bg-cyan-900/40 text-cyan-400 hover:bg-cyan-800/60 hover:text-cyan-300 active:scale-[0.98]'"
+        >
+          {{ isArchiving ? 'ARCHIVING...' : 'FINISH MAPPING' }}
+        </button>
+      </div>
     </div>
 
-    <!-- 底部装饰装饰 -->
+    <!-- 底部装饰 -->
     <div class="mt-4 flex gap-1">
       <div v-for="i in 12" :key="i" class="h-1 flex-1 bg-slate-800 rounded-sm" :class="{ 'bg-cyan-900/50': i < 5 }"></div>
     </div>
